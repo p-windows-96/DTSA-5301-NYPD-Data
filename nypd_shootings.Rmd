@@ -1,0 +1,170 @@
+---
+title: "NYPD Shootings"
+author: "W. Pericles"
+date: "2025-07-27"
+output: pdf_document
+---
+```{r library_packages, echo=TRUE}
+library(tidyverse)
+```
+
+# NYPD Shooting Dataset
+The NYPD Shooting data set is comprised of every shooting incident in NYC going back as 
+far as 2006 up to 2024. Each record represents a shooting incident and contains 
+information related to date and time, information about the shooting event, victim and 
+suspect demographics, and what borough the incident took place.
+
+```{r import, echo=TRUE}
+csv_url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+nypd_csv <- read_csv(csv_url)
+```
+
+# Summary of Data and Cleaning
+```{r data_summary, echo=TRUE}
+summary(nypd_csv)
+```
+
+There are many columns of data that is not necessary for the visualization and analysis I want to perform. In cleaning the data I removed the Incident Key, all data in between Precinct and Location Description, and from 'X_COORD' to 'Lon_Lat'. With the remaining columns there were still plenty of NAs and nulls. Many of the missing data came from the columns related to the perpetrator. My assumption is that the perpetrators that carried the act that led to missing data were never caught. For now those values will be replaced with "Unknown".
+
+```{r clean_data}
+nypd_csv <- nypd_csv %>% select(-INCIDENT_KEY, -c(PRECINCT:LOCATION_DESC), 
+                        -c(X_COORD_CD:Lon_Lat)) %>%
+                        mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>%
+                        rename(Murder = `STATISTICAL_MURDER_FLAG`) %>%
+         replace_na(list(LOC_OF_OCCUR_DESC = "Unknown", PERP_AGE_GROUP = "Unknown",
+         PERP_SEX = "Unknown",PERP_RACE = "Unknown"))
+nypd_csv$PERP_AGE_GROUP[nypd_csv$PERP_AGE_GROUP == '(null)'] <- "Unknown"
+nypd_csv$PERP_SEX[nypd_csv$PERP_SEX == '(null)'] <- "Unknown"
+nypd_csv$PERP_RACE[nypd_csv$PERP_RACE == '(null)'] <- "Unknown"
+
+summary(nypd_csv)
+```
+
+# Visualization and Analysis
+## 2020 and Incidents During Holidays
+  Naturally, I wanted to know what was the average number of shootings per day 
+per year. I wanted to see if the average would rise over time, decline, or stay 
+about the same level. I was pleased to see the that from 2006 to 2019 that 
+shooting incidents had a decline. But in 2020, the shootings incidents climbed
+back up to the levels from when the data was first being tracked. I suspected 
+that the 2020 COVID-19 pandemic and social unrest, such as the killing of George
+Floyd, was the cause of the rise in shootings. 2020 did see a record number of gun
+purchases. Thankfully the rate of shootings have since declined.
+
+After viewing the data for average number of shootings per day, I wanted to know
+if holidays significantly change the number of shootings in the day. From the
+available data, I counted the number of shootings that occurred in each Christmas
+and Halloween. Roughly, about half of the years showed that there was more shootings
+than the average for a given year on Christmas, with 2017 having a well above averge
+number of shootings that day. I expected for Christmas to be exclusively a below 
+average shooting day due to the holiday's generally positive spirit. 2023 did 
+have the Christmas miracle of have no reported shootings!
+
+However, Halloween has far more "above the daily average" shootings. 2021 
+had 17 shooting incidents on Halloween night, while the daily average was
+5.5 shootings a day. Halloween involves the outdoot activites like 
+trick-or-treating and pumpkin patches. With the increase of interactions 
+between people you can expect the chances of shootings go up.
+
+```{r visuals_holiday}
+shooting_per_year <- nypd_csv %>% group_by(year = year(OCCUR_DATE)) %>% 
+          select(OCCUR_DATE, year) %>% 
+          count(year, name = "Incidents") %>% 
+          mutate(avg = ifelse(year %%4 == 0, Incidents/366,Incidents/365))
+
+# Number of shootings on Christmas
+christmas_incidents <- nypd_csv %>% filter(format(OCCUR_DATE, "%m") == "12" 
+                & format(OCCUR_DATE, "%d") == "25") %>% 
+                group_by(year = year(OCCUR_DATE)) %>% 
+                select(OCCUR_DATE, year) %>% 
+                count(year, name = "Incidents") %>% 
+                tibble() %>% add_row(year = 2023, Incidents = 0)
+christmas_incidents <- christmas_incidents %>% sort_by(christmas_incidents, 
+                      christmas_incidents$year)
+
+# Number of shootings on Halloween
+halloween <- nypd_csv %>% filter(format(OCCUR_DATE, "%m") == "10" & 
+                          format(OCCUR_DATE, "%d") == "31") %>% 
+                          group_by(year = year(OCCUR_DATE)) %>% 
+                          select(OCCUR_DATE, year) %>% 
+                          count(year, name = "Incidents")
+
+# plotting data
+shooting_per_year %>% ggplot(aes(x = year, y = avg)) +
+      geom_line(aes(color = "Avg Shooting per Day")) +
+      geom_point(aes(color = "Avg Shooting per Day")) +
+      geom_line(aes(y = christmas_incidents$Incidents, color = "Christmas")) +
+      geom_point(aes(y = christmas_incidents$Incidents, color = "Christmas")) +
+      geom_line(aes(y = halloween$Incidents, color = "Halloween")) +
+      geom_point(aes(y = halloween$Incidents, color = "Halloween"))+
+      scale_x_continuous(breaks=seq(2006,2024,by=2)) +
+      labs(title = "Average Shootings Per Day vs. Holidays", y = "# of Shootings",
+           theme(plot.title = element_text(hjust = 0.5)))
+```
+
+## Modeling
+From 2006 to 2019, the average shootings per day made a downward trend, showing
+great improvement. But with the 2020 pandemic and social unrest, the average
+shooting per day skyrocketed. The prediction model below illustrates the
+average shooting per day would be about 3.8 a day, but the actual data shows
+that the average was 5.3. Years 2021 and 2022 were also well above the prediction
+model, but 2023 and 2024 show that shooting incidents are beginning to cool off
+again as we get further from the pandemic years.
+
+```{r avg_model}
+model <- shooting_per_year %>% lm(formula = avg ~ year)
+pred <- predict(model, tibble(year = c(2006:2024)))
+shooting_per_year %>% ggplot(mapping = aes(x = year, y = pred)) + 
+  geom_point(mapping = aes(color = "Prediction")) +
+  geom_point(mapping = aes(y = avg, color = "Average per Day")) +
+  scale_y_continuous(breaks=seq(2,6,by=0.5)) +
+  scale_x_continuous(breaks=seq(2006,2024,by=2)) +
+  labs(title = "Predictions vs Average Shootings Per Day", 
+        y = "Avg. # of Shootings")
+```
+
+## Incidents Month Over Month
+When I started to look at the data, I started to as myself, "are the number 
+of shootings distributed evenly throughout the year, or do shootings occur more
+often in certain times of the year?" So I organized the data to count the number
+of shootings in a given month in each respective year. Below is a plot of
+shootings from 2019-2023. I immediately noticed that there are more shootings in
+the summer months, but a decline as the year goes into the cooler months.
+
+```{r visuals_months}
+month_by_month <- nypd_csv %>% group_by(year = year(OCCUR_DATE), 
+                  month = month(OCCUR_DATE)) %>% 
+                  select(year, month) %>% 
+                  count(year, month)
+
+month_by_month %>% filter(year>=2019) %>%
+                  mutate(year = as.character(year)) %>%
+                  ggplot(mapping = aes(x = month, y = n)) +
+                  geom_line(mapping = aes(color = year)) +
+                  geom_point(mapping = aes(color = year)) +
+                  scale_x_continuous(breaks=seq(1,12,by=1)) +
+                  scale_y_continuous(breaks=seq(0,400,by=50)) +
+  labs(title = "Shootings per Month (2019-2024)", y = "# of Shootings")
+```
+
+# Conclusion
+The rate of shootings that occur in NYC can change over the course of a year or
+be affected by world events. Not only did the COVID-19 pandemic cause a health
+crisis, it caused a crime crisis as well. The data also suggests that holidays, 
+especially Halloween, can have higher number of incidents than the average, and
+the temperature can affect the numbers too.
+
+## Bias
+I did go into this research with the biased opinion that Christmas would always 
+have a low number of shooting incidents due to its generally positive presence.
+I was disappointed to see that about half of the years from the data have the
+number of Christmas shootings higher than the daily average. To mitigate the 
+disappointment, I added the Halloween data to the plot, assuming that it would
+have a higher number of shootings. The high Halloween numbers can lead people to
+not think so poorly about the Christmas numbers. This is an example of poor
+ethics.
+
+# Session Info
+```{r}
+sessionInfo()
+```
